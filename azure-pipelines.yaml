@@ -1,119 +1,47 @@
 trigger:
   branches:
     include:
-      - main
+    - main
   paths:
-    include:
-      - 'index.html'
-      - 'unsupported.html'
-      - '404.html'
-      - 'assets'
+    include: 
+    - 'assets/i18n'
 
 pr: none
 
 variables:
+  storage: 'ambassadorcomponents'
+  component: 'i18n'
   subscription: 'devops'
   environment: 'PROD'
-  containerRegistry: 'ambassador-acr'
-  vmImageName: 'ubuntu-latest'
-  projectName: 'website'
 
 stages:
-  - stage: Build
-    displayName: Build
-    jobs:
-      - job: Build
-        displayName: Build
-        pool:
-          vmImage: $(vmImageName)
-        steps:
-          - task: NodeTool@0
-            inputs:
-              versionSpec: '12.x'
-            displayName: 'Install Node.js'
-          - script: |
-              npm install 
-              npm run build:prod
-            displayName: 'npm install, npm run build:prod'
-          - task: CopyFiles@2
-            inputs:
-              Contents: 'build/**'
-              TargetFolder: '$(Build.ArtifactStagingDirectory)'
-          - task: PublishBuildArtifacts@1
-            inputs:
-              PathtoPublish: $(Build.ArtifactStagingDirectory)
-              ArtifactName: 'html'
-
-  - stage: Image
-    displayName: Image
-    dependsOn: Build
-    jobs:
-      - job: Image
-        displayName: Push Image
-        pool:
-          vmImage: $(vmImageName)
-        steps:
-          - task: DownloadPipelineArtifact@2
-            inputs:
-              buildType: 'current'
-              artifactName: 'html'
-              targetPath: '$(Pipeline.Workspace)'
-          - task: Docker@2
-            displayName: 'Build and push image to registry'
-            inputs:
-              containerRegistry: '$(containerRegistry)'
-              repository: '$(projectName)'
-              Dockerfile: '$(Pipeline.Workspace)/build/Dockerfile'
-              buildContext: $(Pipeline.Workspace)/build
-              tags: |
-                $(Build.BuildNumber)
-                latest
-          - task: PublishPipelineArtifact@1
-            inputs:
-              targetPath: '$(System.DefaultWorkingDirectory)/deploy/prod/deployment.yaml'
-              artifact: 'k8s'
-
-  - stage: Deploy
-    displayName: Deploy
-    dependsOn: Image
-    jobs:
-      - deployment: Deploy
-        displayName: Deploy
-        pool:
-          vmImage: $(vmImageName)
-        environment: 'PROD'
-        strategy:
-          runOnce:
-            deploy:
-              steps:
-                - task: DownloadPipelineArtifact@2
-                  inputs:
-                    buildType: 'current'
-                    targetPath: '$(Pipeline.Workspace)'
-                    patterns: '**/*.yaml'
-
-                - task: qetza.replacetokens.replacetokens-task.replacetokens@3
-                  displayName: 'Replace tokens in yaml files'
-                  inputs:
-                    rootDirectory: '$(Pipeline.Workspace)/k8s/'
-                    escapeType: none
-                    targetFiles: '**/*.yaml'
-                    tokenPrefix: '$$'
-                    tokenSuffix: '$$'
-
-                - task: Kubernetes@0
-                  displayName: 'kubectl apply'
-                  inputs:
-                    kubernetesServiceConnection: 'ambassador-cluster'
-                    namespace: ingress-nginx
-                    command: apply
-                    useConfigurationFile: true
-                    configuration: '$(Pipeline.Workspace)/k8s/deployment.yaml'
-                    azureSubscription: '$(subscription)'
-                    azureContainerRegistry: '$(containerRegistry)'
-                    secretName: 'acr-secret'
-
-                - task: PublishPipelineArtifact@1
-                  inputs:
-                    targetPath: '$(Pipeline.Workspace)/k8s/deployment.yaml'
-                    artifact: 'transformed-deployment'
+- stage: Deploy
+  displayName: Deploy
+  jobs:  
+  - job: Deploy
+    displayName: Deploy to blob storage
+    pool:
+      vmImage: 'windows-latest'
+    steps:
+    - task: AzureFileCopy@2
+      displayName: 'Copy localisation files to blob'
+      inputs:
+        sourcePath: '$(Build.Repository.LocalPath)/assets/i18n'
+        additionalArgumentsForBlobCopy: | 
+          '/Y'
+          '/Pattern:*.json' 
+        azureSubscription: $(subscription)
+        destination: AzureBlob
+        storage: $(storage)
+        containerName: 'assets/$(component)'
+    - task: AzureFileCopy@2
+      displayName: 'Copy localisation files to blob for Latest'
+      inputs:
+        sourcePath: '$(Build.Repository.LocalPath)/assets/i18n'
+        additionalArgumentsForBlobCopy: | 
+          '/Y'
+          '/Pattern:*.json' 
+        azureSubscription: $(subscription)
+        destination: AzureBlob
+        storage: $(storage)
+        containerName: 'assets/$(component)'
